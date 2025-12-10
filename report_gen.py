@@ -28,7 +28,24 @@ class PDFReport:
         
         # Iterate through summary and print important rows
         for index, row in self.summary_df.iterrows():
-            line = f"Col: {row['Column']} | Skew: {row.get('Skewness', '-') } | Normal: {row.get('Is Normal?', '-')}"
-            pdf.cell(0, 10, txt=line, ln=True)
+            # --- FIX: Remove Emojis for PDF Compatibility ---
+            raw_normal = str(row.get('Is Normal?', '-'))
+            
+            # Convert "✅ Yes" to just "YES"
+            if "Yes" in raw_normal:
+                clean_normal = "YES"
+            # Convert "❌ No" to just "NO"
+            elif "No" in raw_normal:
+                clean_normal = "NO"
+            else:
+                clean_normal = "-"
+            
+            # Create the line of text
+            line = f"Col: {row['Column']} | Skew: {row.get('Skewness', '-') } | Normal: {clean_normal}"
+            
+            # This ensures no hidden weird characters crash the PDF
+            clean_line = line.encode('latin-1', 'replace').decode('latin-1')
+            
+            pdf.cell(0, 10, txt=clean_line, ln=True)
         
         return pdf.output(dest='S').encode('latin-1')
