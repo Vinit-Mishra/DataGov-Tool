@@ -1,83 +1,114 @@
 import streamlit as st
 import pandas as pd
-from stats_engine import DataProfiler
-from plotter import DataPlotter
-from report_gen import PDFReport
+import matplotlib.pyplot as plt
+import seaborn as sns
+from utils import summarize_data, plot_numeric_data, plot_categorical_data
 
-st.set_page_config(page_title="DataGov Tool", layout="wide")
+# --- PAGE CONFIGURATION ---
+st.set_page_config(page_title="HR Analytics Dashboard", page_icon="👥", layout="wide")
 
-st.title("📊 DataGov: The Automated Data Scientist")
-st.markdown("Upload any CSV to auto-generate a **Statistical Health Report**, **Charts**, and **PDF Documentation**.")
+st.title("👥 HR Analytics Dashboard")
+st.markdown("Analyze employee demographics, retention, and salary trends.")
 
-uploaded_file = st.file_uploader("Upload your CSV file here", type="csv")
+# --- 1. DATA LOADING ---
+uploaded_file = st.file_uploader("Upload Employee.csv", type=["csv"])
 
 if uploaded_file is not None:
-    # Load Data
     df = pd.read_csv(uploaded_file)
-    st.success(f"File Uploaded Successfully! Shape: {df.shape}")
-
-    # Tabs for organization
-    tab1, tab2, tab3, tab4 = st.tabs(["📋 Data Overview", "📈 Deep Stats", "🎨 Visualizations", "📄 PDF Report"])
-
-    # Initialize Engines
-    profiler = DataProfiler(df)
-    plotter = DataPlotter(df)
-
-    # --- TAB 1: OVERVIEW ---
-    with tab1:
-        st.subheader("Dataset Preview")
-        st.dataframe(df.head())
-        
-        st.subheader("Column Types & Missing Values")
-        buffer = pd.DataFrame({
-            'Type': df.dtypes.astype(str),
-            'Missing Count': df.isnull().sum(),
-            'Missing (%)': (df.isnull().sum() / len(df)) * 100
-        })
-        st.dataframe(buffer)
-
-    # --- TAB 2: STATISTICS ---
-    with tab2:
-        st.subheader("Statistical Deep Dive")
-        with st.spinner("Running Normality & Skewness Tests..."):
-            summary_df = profiler.run_full_scan()
-            st.dataframe(summary_df, use_container_width=True)
+    
+    # --- 2. SIDEBAR FILTERS ---
+    st.sidebar.header("Filter Data")
+    
+    # Check if 'Department' exists to filter by it
+    if 'Department' in df.columns:
+        depts = df['Department'].unique().tolist()
+        selected_depts = st.sidebar.multiselect("Select Department", depts, default=depts)
+        if selected_depts:
+            df = df[df['Department'].isin(selected_depts)]
             
-            st.info("💡 Note: If 'Is Normal?' is NO, use non-parametric tests for analysis.")
+    # Check if 'Gender' exists to filter by it
+    if 'Gender' in df.columns:
+        genders = df['Gender'].unique().tolist()
+        selected_gender = st.sidebar.multiselect("Select Gender", genders, default=genders)
+        if selected_gender:
+            df = df[df['Gender'].isin(selected_gender)]
 
-    # --- TAB 3: VISUALIZATIONS ---
-    with tab3:
-        col1, col2 = st.columns(2)
-        with col1:
-            st.subheader("Correlation Matrix")
-            # Filter numeric columns for correlation
-            numeric_df = df.select_dtypes(include=['number'])
-            if not numeric_df.empty:
-                fig_corr = plotter.plot_correlation_heatmap(numeric_df)
-                st.plotly_chart(fig_corr, use_container_width=True)
-            else:
-                st.warning("Not enough numerical columns for correlation.")
+    st.success(f"Showing data for {len(df)} employees")
 
-        with col2:
-            st.subheader("Distribution Checker")
-            numeric_cols = df.select_dtypes(include=['number']).columns
-            selected_col = st.selectbox("Select Column to Inspect", numeric_cols)
-            if selected_col:
-                fig_dist = plotter.plot_distribution(selected_col)
-                st.plotly_chart(fig_dist, use_container_width=True)
+    # --- 3. KEY METRICS (KPIs) ---
+    st.subheader("Key Metrics")
+    col1, col2, col3, col4 = st.columns(4)
+    
+    # Total Employees
+    col1.metric("Total Employees", len(df))
+    
+    # Attrition Rate (if column exists)
+    if 'Attrition' in df.columns:
+        attrition_count = df[df['Attrition'] == 'Yes'].shape[0]
+        attrition_rate = (attrition_count / len(df)) * 100
+        col2.metric("Attrition Rate", f"{attrition_rate:.1f}%")
+    else:
+        col2.metric("Attrition Rate", "N/A")
 
-    # --- TAB 4: REPORT GENERATION ---
-    with tab4:
-        st.subheader("Export Documentation")
-        if st.button("Generate Professional PDF Report"):
-            with st.spinner("Compiling PDF..."):
-                pdf_gen = PDFReport(df, summary_df)
-                pdf_bytes = pdf_gen.create_pdf()
+    # Average Age (if column exists)
+    if 'Age' in df.columns:
+        avg_age = df['Age'].mean()
+        col3.metric("Avg. Age", f"{avg_age:.1f} yrs")
+        
+    # Average Income (if column exists)
+    # Note: Adjust column name 'MonthlyIncome' if your CSV has a different name
+    if 'MonthlyIncome' in df.columns:
+        avg_income = df['MonthlyIncome'].mean()
+        col4.metric("Avg. Income", f"${avg_income:,.0f}")
+    
+    st.markdown("---")
+
+    # --- 4. DETAILED ANALYSIS TABS ---
+    tab1, tab2, tab3 = st.tabs(["📊 Distributions", "📉 Attrition Analysis", "🔢 Raw Data"])
+    
+    with tab1:
+        st.header("Distribution of Data")
+        col_num, col_cat = st.columns(2)
+        
+        with col_num:
+            st.subheader("Numeric Features")
+            # Using your existing utils function
+            try:
+                fig_num = plot_numeric_data(df)
+                st.pyplot(fig_num)
+            except:
+                st.info("No numeric data to plot.")
                 
-                st.download_button(
-                    label="📥 Download PDF Report",
-                    data=pdf_bytes,
-                    file_name="DataGov_Report.pdf",
-                    mime="application/pdf"
+        with col_cat:
+            st.subheader("Categorical Features")
+            # Using your existing utils function
+            try:
+                fig_cat = plot_categorical_data(df)
+                st.pyplot(fig_cat)
+            except:
+                st.info("No categorical data to plot.")
 
-                )
+    with tab2:
+        st.header("Who is leaving?")
+        if 'Attrition' in df.columns and 'Department' in df.columns:
+            # Custom plot for Attrition by Department
+            fig, ax = plt.subplots(figsize=(8, 4))
+            sns.countplot(data=df, x='Department', hue='Attrition', ax=ax)
+            ax.set_title("Attrition by Department")
+            st.pyplot(fig)
+        elif 'Attrition' not in df.columns:
+            st.warning("This dataset does not have an 'Attrition' column.")
+            
+        if 'Attrition' in df.columns and 'Age' in df.columns:
+             # Custom plot for Age vs Attrition
+            fig, ax = plt.subplots(figsize=(8, 4))
+            sns.histplot(data=df, x='Age', hue='Attrition', kde=True, ax=ax)
+            ax.set_title("Age Distribution by Attrition Status")
+            st.pyplot(fig)
+
+    with tab3:
+        st.header("Raw Data")
+        st.dataframe(df)
+
+else:
+    st.info("Please upload your Employee.csv file to begin.")
