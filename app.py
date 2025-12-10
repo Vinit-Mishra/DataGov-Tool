@@ -1,8 +1,8 @@
 import streamlit as st
 import pandas as pd
-from src.stats_engine import DataProfiler
-from src.plotter import DataPlotter
-from src.report_gen import PDFReport
+from stats_engine import DataProfiler
+from plotter import DataPlotter
+from report_gen import PDFReport
 
 st.set_page_config(page_title="DataGov Tool", layout="wide")
 
@@ -79,4 +79,5 @@ if uploaded_file is not None:
                     data=pdf_bytes,
                     file_name="DataGov_Report.pdf",
                     mime="application/pdf"
+
                 )
