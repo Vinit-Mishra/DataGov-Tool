@@ -130,4 +130,10 @@ pdf_report_generator = PDFReport(st.session_state.current_df, summary_df)
 pdf_output_bytes = pdf_report_generator.create_pdf()
 
 st.download_button(
-    label="⬇️ Download Full Statistical Report
+    label="⬇️ Download Full Statistical Report (PDF)",
+    data=pdf_output_bytes,
+    file_name="Automated_Data_Analysis_Report.pdf",
+    mime="application/pdf"
+)
+
+st.info("The Data Analyst Assistant has completed its analysis.")
