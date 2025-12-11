@@ -7,3 +7,4 @@ seaborn
 streamlit
 fpdf2
 matplotlib
+scikit-learn
