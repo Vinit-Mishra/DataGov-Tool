@@ -2,8 +2,6 @@ import streamlit as st
 import pandas as pd
 import io
 import matplotlib.pyplot as plt
-
-# Import the necessary classes from your existing files
 from stats_engine import DataProfiler
 from plotter import DataPlotter
 from report_gen import PDFReport
@@ -23,7 +21,7 @@ if uploaded_file is None:
 
 # Load data
 df = pd.read_csv(uploaded_file)
-st.success(f"Dataset '{uploaded_file.name}' loaded successfully! Total Rows: {df.shape[0]}, Total Columns: {df.shape[1]}")
+st.success(f"Dataset '{uploaded_file.name}' loaded successfully!")
 st.markdown("---")
 
 # Initialize state to hold the (potentially cleaned) DataFrame
@@ -34,56 +32,69 @@ if 'current_df' not in st.session_state:
 profiler = DataProfiler(st.session_state.current_df)
 summary_df = profiler.run_full_scan()
 
-# --- 2. DATA DESCRIPTION & STATISTICAL PROPERTIES ---
-st.header("1️⃣ Data Description & Statistical Profile")
+# --- 2. DATA OVERVIEW & ERROR IDENTIFICATION (NEW REQUIRED ORDER) ---
+st.header("1️⃣ Data Overview & Error Identification")
 
-# 3. Whole Description of Data & 6. Statistical Property
-with st.expander("📊 Full Statistical Summary (Click to expand)", expanded=False):
-    st.subheader("Statistical Properties of All Columns")
-    st.dataframe(summary_df)
+# 1. Show rows and columns (Requirement met)
+col_rows, col_cols = st.columns(2)
+col_rows.metric("Total Rows (Observations)", st.session_state.current_df.shape[0])
+col_cols.metric("Total Columns (Features)", st.session_state.current_df.shape[1])
 
-# --- 3. ERROR IDENTIFICATION & RESOLUTION ---
-st.header("2️⃣ Error Identification & Cleaning")
+st.markdown("---")
 
-# 4. Identifies error in the dataset
+# 2. Show error in the values (Requirement met)
 missing_data_rows = summary_df[summary_df['Missing (%)'] > 0]
 skewed_cols = summary_df[(summary_df['Type'].isin(['int64', 'float64'])) & (abs(summary_df['Skewness']) > 1)]
 
-# Display Warnings
+st.subheader("🚨 Detected Data Quality Issues")
+
 if not missing_data_rows.empty:
-    st.error(f"🚨 **Critical Error: Missing Values** found in {len(missing_data_rows)} columns. This can skew analysis.")
-    with st.expander("Details on Missing Data"):
-        st.dataframe(missing_data_rows[['Column', 'Missing (%)']])
+    st.error(f"**Missing Values:** Found in **{len(missing_data_rows)}** columns. Up to **{missing_data_rows['Missing (%)'].max():.2f}%** missing in one column.")
+    with st.expander("Details: Missing Data"):
+        st.dataframe(missing_data_rows[['Column', 'Missing (%)']].sort_values(by='Missing (%)', ascending=False))
         
 if not skewed_cols.empty:
-    st.warning(f"⚠️ **Warning: Highly Skewed Data** found in {len(skewed_cols)} numeric columns. Consider transformation.")
-    with st.expander("Details on Skewed Data"):
-        st.dataframe(skewed_cols[['Column', 'Skewness', 'Recommendations']])
+    st.warning(f"**High Skewness:** Found in **{len(skewed_cols)}** numeric columns. This indicates non-normal distributions.")
+    with st.expander("Details: Skewed Data & Recommendations"):
+        st.dataframe(skewed_cols[['Column', 'Skewness', 'Recommendations']].sort_values(by='Skewness', key=abs, ascending=False))
 else:
-    st.success("✅ Initial Data Scan complete. No critical missing values or highly skewed columns detected.")
+    st.success("✅ Initial Data Scan: No critical missing values or highly skewed columns detected. Data is relatively clean!")
     
-# 5. Resolve error - Interactive Cleaning
+st.markdown("---")
+
+# --- 3. ERROR RESOLUTION (CLEANING) ---
+st.header("2️⃣ Error Resolution (Cleaning)")
+
+# Interactive Cleaning (Resolve error)
 if st.button("🪄 Auto-Clean Dataset (Drop NaNs)"):
     # Simple fix: drop rows with any NaN values
     initial_rows = st.session_state.current_df.shape[0]
     st.session_state.current_df.dropna(inplace=True)
     rows_dropped = initial_rows - st.session_state.current_df.shape[0]
-    st.success(f"🧹 Cleaned dataset! Dropped **{rows_dropped}** rows with missing values.")
-    # Re-run profiler on the cleaned data
+    st.success(f"🧹 Cleaned dataset! Dropped **{rows_dropped}** rows with missing values. Please check the updated profile below.")
+    # Re-run profiler on the cleaned data to update summary_df
     profiler = DataProfiler(st.session_state.current_df)
     summary_df = profiler.run_full_scan()
-    st.dataframe(summary_df)
     
 st.markdown("---")
 
-# --- 4. VISUALIZATION AND INTERACTIVITY ---
-st.header("3️⃣ Interactive Visualization")
+# --- 4. STATISTICAL PROPERTIES & FULL SUMMARY ---
+st.header("3️⃣ Full Statistical Profile")
+
+# Statistical Property of Data & Whole Description of Data
+with st.expander("📊 Detailed Statistical Summary (Click to expand)", expanded=False):
+    st.subheader("Statistical Properties of All Columns")
+    st.dataframe(summary_df)
+    
+st.markdown("---")
+    
+# --- 5. VISUALIZATION AND INTERACTIVITY ---
+st.header("4️⃣ Interactive Visualization")
 data_plotter = DataPlotter(st.session_state.current_df)
 
 tab_dist, tab_corr, tab_raw = st.tabs(["📊 Distributions", "🔥 Correlation Heatmap", "📝 Raw Data (Current)"])
 
 with tab_dist:
-    # 2. Options to see the visualization
     st.subheader("Feature Distribution Analysis")
     
     col_to_plot = st.selectbox(
@@ -93,7 +104,6 @@ with tab_dist:
     
     if col_to_plot:
         try:
-            # Use the plot_distribution from plotter.py (Plotly)
             fig_dist = data_plotter.plot_distribution(col_to_plot)
             st.plotly_chart(fig_dist, use_container_width=True)
         except Exception as e:
@@ -105,7 +115,6 @@ with tab_corr:
     if numeric_df.empty:
         st.warning("No numeric columns found to plot correlation.")
     else:
-        # Use the plot_correlation_heatmap from plotter.py (Plotly)
         fig_corr = data_plotter.plot_correlation_heatmap(numeric_df)
         st.plotly_chart(fig_corr, use_container_width=True)
 
@@ -113,19 +122,12 @@ with tab_raw:
     st.subheader("Current Working Dataset")
     st.dataframe(st.session_state.current_df)
 
-# --- 5. REPORT GENERATION (ATTRACTIVE FEATURE) ---
+# --- 6. REPORT GENERATION ---
 st.markdown("---")
-st.header("4️⃣ Export Analysis")
+st.header("5️⃣ Export Analysis")
 
-# Generate the PDF report
 pdf_report_generator = PDFReport(st.session_state.current_df, summary_df)
 pdf_output_bytes = pdf_report_generator.create_pdf()
 
 st.download_button(
-    label="⬇️ Download Full Statistical Report (PDF)",
-    data=pdf_output_bytes,
-    file_name="Automated_Data_Analysis_Report.pdf",
-    mime="application/pdf"
-)
-
-st.info("The Data Analyst Assistant has completed its initial analysis. Use the tabs above to deep-dive.")
+    label="⬇️ Download Full Statistical Report
