@@ -16,7 +16,7 @@ from report_gen import PDFReport
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Pro Data Analyst Assistant", page_icon="⭐", layout="wide")
 
-st.title("⭐ Pro Data Analyst Assistant")
+st.title(" Data Analyst Assistant")
 st.markdown("Automated data preparation, advanced analysis, and basic predictive modeling.")
 
 # --- 1. DATA LOADING ---
@@ -283,3 +283,4 @@ except Exception as e:
     st.error(f"Could not generate PDF report. Ensure fpdf2 is installed. Error: {e}")
 
 st.info("The Pro Data Analyst Assistant is ready for deep-dive analysis and modeling.")
+
