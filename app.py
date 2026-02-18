@@ -14,15 +14,12 @@ from plotter import DataPlotter
 from report_gen import PDFReport 
 
 # --- PAGE CONFIGURATION ---
-# Fixed typo: 'Assisiant' -> 'Assistant'
 st.set_page_config(page_title="Pro Data Analyst Assistant", page_icon="⭐", layout="wide")
 
-# Fixed typo: 'st.litle' -> 'st.title'
 st.title("Data Analyst Assistant")
 st.markdown("Automated data preparation, advanced analysis, and basic predictive modeling.")
 
 # --- 1. DATA LOADING ---
-# Updated to accept multiple formats
 uploaded_file = st.file_uploader("Upload your Dataset (.csv, .xlsx, .xls)", type=["csv", "xlsx", "xls"])
 
 if uploaded_file is None:
@@ -43,20 +40,20 @@ except Exception as e:
     st.error(f"Error loading file: {e}")
     st.stop()
 
-# Initialize state - Updated logic to handle name changes correctly
+# Initialize state
 if 'current_df' not in st.session_state or st.session_state.get('uploaded_file_name') != uploaded_file.name:
     st.session_state.current_df = df.copy()
     st.session_state.uploaded_file_name = uploaded_file.name
     
-# Initialize the profiler and run the analysis
+# Initialize the profiler and run the analysis on the CURRENT state of data
 profiler = DataProfiler(st.session_state.current_df)
 summary_df = profiler.run_full_scan()
 
 
-# --- 2. DATA OVERVIEW & ERROR IDENTIFICATION ---
+# --- SECTION 1: DATA OVERVIEW ---
 st.header("1️⃣ Data Overview & Error Identification")
 
-# 1. Show rows and columns
+# Show rows and columns
 col_rows, col_cols = st.columns(2)
 col_rows.metric("Total Rows (Observations)", st.session_state.current_df.shape[0])
 col_cols.metric("Total Columns (Features)", st.session_state.current_df.shape[1])
@@ -90,8 +87,20 @@ if missing_data_rows.empty and outlier_cols.empty and skewed_cols.empty:
 st.markdown("---")
 
 
-# --- 3. ERROR RESOLUTION (PRO CLEANING) ---
-st.header("2️⃣ Advanced Error Resolution (Cleaning & Preprocessing)")
+# --- SECTION 2: STATISTICAL PROFILE (Moved Up) ---
+st.header("2️⃣ Full Statistical Profile")
+
+with st.expander("📊 Detailed Statistical Summary (Click to expand)", expanded=True):
+    st.subheader("Statistical Properties of All Columns")
+    # Display the summary without the helper skewness column
+    display_df = summary_df.drop(columns=['Skewness_Numeric'], errors='ignore')
+    st.dataframe(display_df)
+    
+st.markdown("---")
+
+
+# --- SECTION 3: ERROR RESOLUTION (Moved Down) ---
+st.header("3️⃣ Advanced Error Resolution (Cleaning & Preprocessing)")
 col_nan, col_outlier = st.columns(2)
 
 with col_nan:
@@ -108,11 +117,11 @@ with col_nan:
             st.success(f"🧹 Dropped **{rows_dropped}** rows with missing values.")
         elif nan_option in ["Impute Mean/Mode", "Impute Median/Mode"]:
             strategy = 'mean' if 'Mean' in nan_option else 'median'
+            # Assuming profiler.impute_data returns the cleaned dataframe
             st.session_state.current_df = profiler.impute_data(imputation_strategy=strategy) 
             st.success(f"🧹 Imputed missing values using **{strategy.capitalize()}**.")
         
-        st.rerun() # Refresh to update the scan
-
+        st.rerun() # Forces the app to reload and update the Profile in Section 2
 
 with col_outlier:
     st.subheader("Outlier Handling")
@@ -122,24 +131,16 @@ with col_outlier:
     )
     if st.button("Apply Outlier Strategy"):
         if outlier_action == "Cap Outliers (Winsorize)":
+            # Assuming profiler.cap_outliers returns the cleaned dataframe
             st.session_state.current_df = profiler.cap_outliers() 
             st.success("📐 Capped outliers using the IQR method.")
         
-        st.rerun()
+        st.rerun() # Forces the app to reload and update the Profile in Section 2
 
 st.markdown("---")
 
-# --- 4. STATISTICAL PROPERTIES & FULL SUMMARY ---
-st.header("3️⃣ Full Statistical Profile")
 
-with st.expander("📊 Detailed Statistical Summary (Click to expand)", expanded=False):
-    st.subheader("Statistical Properties of All Columns")
-    display_df = summary_df.drop(columns=['Skewness_Numeric'], errors='ignore')
-    st.dataframe(display_df)
-    
-st.markdown("---")
-    
-# --- 5. VISUALIZATION AND INTERACTIVITY ---
+# --- SECTION 4: VISUALIZATION ---
 st.header("4️⃣ Interactive Visualization")
 data_plotter = DataPlotter(st.session_state.current_df)
 
@@ -167,75 +168,3 @@ with tab_corr:
 with tab_bivariate:
     st.subheader("Compare Two Variables")
     cols = st.session_state.current_df.columns.tolist()
-    col_x = st.selectbox("Select X-axis Column:", cols, key="x_col")
-    col_y = st.selectbox("Select Y-axis Column:", cols, key="y_col")
-
-    if col_x and col_y:
-        try:
-            plot_data = st.session_state.current_df.dropna(subset=[col_x, col_y])
-            if pd.api.types.is_numeric_dtype(plot_data[col_x]) and pd.api.types.is_numeric_dtype(plot_data[col_y]):
-                fig = px.scatter(plot_data, x=col_x, y=col_y, trendline="ols", title=f"Scatter Plot: {col_x} vs {col_y}")
-            else:
-                fig = px.box(plot_data, x=col_x, y=col_y, title=f"Relationship: {col_y} by {col_x}")
-            st.plotly_chart(fig, use_container_width=True)
-        except Exception as e:
-            st.error(f"Plotting Error: {e}")
-
-with tab_raw:
-    st.subheader("Current Working Dataset")
-    st.dataframe(st.session_state.current_df)
-
-
-# --- 6. SIMPLE PREDICTIVE MODELING ---
-st.header("5️⃣ Simple Predictive Modeling (Binary Classification)")
-
-target_col = st.selectbox("Select Target Column:", st.session_state.current_df.columns)
-
-if st.button("Run Logistic Regression"):
-    try:
-        data = st.session_state.current_df.copy()
-        if data[target_col].nunique() != 2:
-            st.error("Model requires a **binary** target column.")
-        else:
-            with st.spinner("Training Model..."):
-                data.dropna(inplace=True)
-                le = LabelEncoder()
-                data[target_col] = le.fit_transform(data[target_col])
-                
-                categorical_cols = data.select_dtypes(include=['object', 'category']).columns.tolist()
-                data = pd.get_dummies(data, columns=categorical_cols, drop_first=True)
-                
-                X = data.drop(columns=[target_col])
-                y = data[target_col]
-
-                X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
-                model = LogisticRegression(max_iter=1000)
-                model.fit(X_train, y_train)
-                y_pred = model.predict(X_test)
-                
-                st.metric("Model Accuracy", f"{accuracy_score(y_test, y_pred):.2f}")
-                st.text("Classification Report:")
-                st.code(classification_report(y_test, y_pred, target_names=[str(c) for c in le.classes_]))
-    except Exception as e:
-        st.error(f"Modeling Error: {e}")
-
-
-# --- 7. REPORT GENERATION ---
-st.markdown("---")
-st.header("6️⃣ Export Analysis")
-
-try:
-    clean_summary = summary_df.drop(columns=['Skewness_Numeric'], errors='ignore')
-    pdf_report_generator = PDFReport(st.session_state.current_df, clean_summary)
-    pdf_output_bytes = pdf_report_generator.create_pdf()
-
-    st.download_button(
-        label="⬇️ Download Full Statistical Report (PDF)",
-        data=pdf_output_bytes,
-        file_name="Pro_Data_Analysis_Report.pdf",
-        mime="application/pdf"
-    )
-except Exception as e:
-    st.error(f"PDF Generation Error: {e}")
-
-st.info("The Pro Data Analyst Assistant is ready for deep-dive analysis.")
