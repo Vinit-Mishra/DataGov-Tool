@@ -329,4 +329,16 @@ st.header("7️⃣ Export Analysis")
 
 try:
     clean_summary = summary_df.drop(columns=['Skewness_Numeric'], errors='ignore')
-    pdf_
+    pdf_report_generator = PDFReport(st.session_state.current_df, clean_summary)
+    pdf_output_bytes = pdf_report_generator.create_pdf()
+
+    st.download_button(
+        label="⬇️ Download Full Statistical Report (PDF)",
+        data=pdf_output_bytes,
+        file_name="Pro_Data_Analysis_Report.pdf",
+        mime="application/pdf"
+    )
+except Exception as e:
+    st.error(f"PDF Generation Error: {e}")
+
+st.info("The Pro Data Analyst Assistant is ready for deep-dive analysis.")
