@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import io
+import re
 import plotly.express as px
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
@@ -12,6 +13,70 @@ from sklearn.preprocessing import LabelEncoder
 from stats_engine import DataProfiler
 from plotter import DataPlotter
 from report_gen import PDFReport 
+
+# --- HELPER FUNCTIONS FOR PATTERN MATCHING ---
+def validate_email(text):
+    if not isinstance(text, str): return False
+    # Standard robust Email Regex
+    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    return bool(re.match(pattern, text))
+
+def validate_url(text):
+    if not isinstance(text, str): return False
+    pattern = r'https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+'
+    return bool(re.match(pattern, text))
+
+def is_numeric_string(text):
+    if isinstance(text, (int, float)): return True
+    if not isinstance(text, str): return False
+    return text.replace('.','',1).isdigit()
+
+def detect_format_inconsistencies(df):
+    """
+    Scans for columns that are mostly one format but have some outliers.
+    Returns a dictionary of {column_name: [list_of_invalid_indices]}
+    """
+    inconsistent_indices = {}
+    
+    for col in df.columns:
+        # Skip purely numeric columns (already handled by IQR)
+        if pd.api.types.is_numeric_dtype(df[col]):
+            continue
+            
+        # Get non-null values
+        valid_series = df[col].dropna().astype(str)
+        if len(valid_series) == 0: continue
+
+        total = len(valid_series)
+        
+        # 1. Check for Mixed Numeric (e.g. ["100", "200", "Two"])
+        numeric_matches = valid_series.apply(is_numeric_string)
+        match_ratio = numeric_matches.sum() / total
+        if 0.9 < match_ratio < 1.0: # If >90% are numbers, the rest are outliers
+            inconsistent_indices[f"{col} (Expected: Numeric)"] = df[~df[col].apply(is_numeric_string) & df[col].notna()].index.tolist()
+            continue
+
+        # 2. Check for Emails (if column name suggests it or content looks like it)
+        email_matches = valid_series.apply(validate_email)
+        match_ratio = email_matches.sum() / total
+        # Heuristic: If col name has 'email' or >50% content is email
+        if 'email' in col.lower() or match_ratio > 0.5:
+             if match_ratio < 1.0: # If not perfect, flag the rest
+                 inconsistent_indices[f"{col} (Expected: Email)"] = df[~df[col].apply(validate_email) & df[col].notna()].index.tolist()
+                 continue
+
+        # 3. Check for Dates (heuristically via pd.to_datetime)
+        # We try converting. If mostly success, flag failures.
+        try:
+            dates = pd.to_datetime(valid_series, errors='coerce')
+            date_ratio = dates.notna().sum() / total
+            if 0.9 < date_ratio < 1.0:
+                 inconsistent_indices[f"{col} (Expected: Date)"] = df[dates.isna() & df[col].notna()].index.tolist()
+        except:
+            pass
+
+    return inconsistent_indices
+
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(page_title="Pro Data Analyst Assistant", page_icon="⭐", layout="wide")
@@ -31,7 +96,6 @@ try:
     if uploaded_file.name.endswith('.csv'):
         df = pd.read_csv(uploaded_file)
     else:
-        # Requires 'openpyxl' installed for .xlsx files
         df = pd.read_excel(uploaded_file)
     
     st.success(f"Dataset '{uploaded_file.name}' loaded successfully!")
@@ -45,7 +109,7 @@ if 'current_df' not in st.session_state or st.session_state.get('uploaded_file_n
     st.session_state.current_df = df.copy()
     st.session_state.uploaded_file_name = uploaded_file.name
     
-# Initialize the profiler and run the analysis on the CURRENT state of data
+# Initialize profiler
 profiler = DataProfiler(st.session_state.current_df)
 summary_df = profiler.run_full_scan()
 
@@ -53,47 +117,40 @@ summary_df = profiler.run_full_scan()
 # --- SECTION 1: DATA OVERVIEW ---
 st.header("1️⃣ Data Overview & Error Identification")
 
-# Calculate Duplicates
 duplicates_count = st.session_state.current_df.duplicated().sum()
 
-# Show rows, columns, and duplicates
-col_rows, col_cols, col_dupes = st.columns(3)
+# Run the New Format Checker
+format_errors = detect_format_inconsistencies(st.session_state.current_df)
+total_format_errors = sum([len(v) for v in format_errors.values()])
+
+col_rows, col_cols, col_dupes, col_fmt = st.columns(4)
 col_rows.metric("Total Rows", st.session_state.current_df.shape[0])
 col_cols.metric("Total Columns", st.session_state.current_df.shape[1])
 col_dupes.metric("Duplicate Rows", duplicates_count)
+col_fmt.metric("Format/Pattern Errors", total_format_errors)
 
-# Show actual duplicate rows if they exist
+# Show Duplicates
 if duplicates_count > 0:
     st.warning(f"⚠️ Found {duplicates_count} duplicate rows.")
     with st.expander("👀 View Duplicate Rows", expanded=False):
         st.dataframe(st.session_state.current_df[st.session_state.current_df.duplicated()])
 
+# Show Format Errors
+if total_format_errors > 0:
+    st.error(f"🚨 Found {total_format_errors} values that don't match the column format (e.g., Invalid Emails, Text in Number columns).")
+    with st.expander("👀 View Pattern Mismatches (Format Outliers)", expanded=True):
+        for col_msg, indices in format_errors.items():
+            st.write(f"**Column: {col_msg}** - {len(indices)} issues found.")
+            st.dataframe(st.session_state.current_df.loc[indices])
+
 st.markdown("---")
 
-# FIX FOR TypeError (Skewness calculation)
+# Existing Statistical Checks
 summary_df['Skewness_Numeric'] = pd.to_numeric(summary_df['Skewness'], errors='coerce') 
-
-# Identifies error in the dataset
 missing_data_rows = summary_df[summary_df['Missing (%)'] > 0]
 outlier_cols = summary_df[summary_df['Outliers (IQR)'] > 0]
 
-skewed_cols = summary_df[
-    (summary_df['Type'].isin(['int64', 'float64', 'int32', 'float32'])) & 
-    (abs(summary_df['Skewness_Numeric']) > 1)
-]
-
-st.subheader("🚨 Detected Data Quality Issues")
-
-if duplicates_count > 0:
-    st.error(f"**Duplicates:** Found **{duplicates_count}** duplicate rows.")
-if not missing_data_rows.empty:
-    st.error(f"**Missing Values:** Found in **{len(missing_data_rows)}** columns.")
-if not outlier_cols.empty:
-    st.warning(f"**Outliers:** Found in **{len(outlier_cols)}** numeric columns.")
-if not skewed_cols.empty:
-    st.warning(f"**High Skewness:** Found in **{len(skewed_cols)}** numeric columns.")
-
-if missing_data_rows.empty and outlier_cols.empty and skewed_cols.empty and duplicates_count == 0:
+if missing_data_rows.empty and outlier_cols.empty and duplicates_count == 0 and total_format_errors == 0:
      st.success("✅ Initial Data Scan: Data is clean and ready for analysis!")
     
 st.markdown("---")
@@ -101,13 +158,10 @@ st.markdown("---")
 
 # --- SECTION 2: STATISTICAL PROFILE ---
 st.header("2️⃣ Full Statistical Profile")
-
-with st.expander("📊 Detailed Statistical Summary (Click to expand)", expanded=True):
+with st.expander("📊 Detailed Statistical Summary (Click to expand)", expanded=False):
     st.subheader("Statistical Properties of All Columns")
-    # Display the summary without the helper skewness column
     display_df = summary_df.drop(columns=['Skewness_Numeric'], errors='ignore')
     st.dataframe(display_df)
-    
 st.markdown("---")
 
 
@@ -115,12 +169,10 @@ st.markdown("---")
 st.header("3️⃣ Advanced Error Resolution (Cleaning & Preprocessing)")
 col_nan, col_outlier, col_clean_dupe = st.columns(3)
 
+# 1. Missing Values
 with col_nan:
     st.subheader("Missing Values")
-    nan_option = st.selectbox(
-        "Strategy:",
-        ["Do Nothing", "Drop Rows", "Impute Mean", "Impute Median"]
-    )
+    nan_option = st.selectbox("Strategy:", ["Do Nothing", "Drop Rows", "Impute Mean", "Impute Median"])
     if st.button("Apply Missing Strategy"):
         if nan_option == "Drop Rows":
             st.session_state.current_df.dropna(inplace=True)
@@ -131,40 +183,62 @@ with col_nan:
             st.success(f"Imputed using {strategy}.")
         st.rerun()
 
+# 2. Outliers (Statistical)
 with col_outlier:
-    st.subheader("Outliers")
-    outlier_action = st.selectbox(
-        "Strategy:",
-        ["Do Nothing", "Cap (Winsorize)"]
-    )
+    st.subheader("Statistical Outliers")
+    outlier_action = st.selectbox("Strategy:", ["Do Nothing", "Cap (Winsorize)"])
     if st.button("Apply Outlier Strategy"):
         if outlier_action == "Cap (Winsorize)":
             st.session_state.current_df = profiler.cap_outliers() 
             st.success("Capped outliers.")
         st.rerun()
 
+# 3. Duplicates
 with col_clean_dupe:
     st.subheader("Duplicates")
-    dupe_action = st.selectbox(
-        "Strategy:",
-        ["Do Nothing", "Remove Duplicates"]
-    )
+    dupe_action = st.selectbox("Strategy:", ["Do Nothing", "Remove Duplicates"])
     if st.button("Apply Duplicate Strategy"):
         if dupe_action == "Remove Duplicates":
-            initial_rows = st.session_state.current_df.shape[0]
             st.session_state.current_df.drop_duplicates(inplace=True)
-            rows_removed = initial_rows - st.session_state.current_df.shape[0]
-            st.success(f"Removed {rows_removed} duplicate rows.")
+            st.success("Removed duplicate rows.")
         st.rerun()
+
+# 4. NEW: Format/Pattern Cleaning
+st.subheader("🔧 Format Inconsistency Cleaning")
+if total_format_errors > 0:
+    st.warning("Detected pattern mismatches (e.g., 'abc' in a numeric column, or invalid emails).")
+    col_fmt_act, col_fmt_btn = st.columns([3, 1])
+    with col_fmt_act:
+        fmt_action = st.selectbox("Choose Action for Invalid Formats:", ["Do Nothing", "Convert Invalid to NaN (Then Impute)", "Drop Rows with Invalid Formats"])
+    with col_fmt_btn:
+        st.write("") # Spacer
+        st.write("") 
+        if st.button("Fix Formats"):
+            if fmt_action == "Drop Rows with Invalid Formats":
+                all_invalid_indices = []
+                for idx_list in format_errors.values():
+                    all_invalid_indices.extend(idx_list)
+                initial_count = st.session_state.current_df.shape[0]
+                st.session_state.current_df.drop(index=list(set(all_invalid_indices)), inplace=True)
+                st.success(f"Dropped {initial_count - st.session_state.current_df.shape[0]} rows with invalid formats.")
+                st.rerun()
+            elif "Convert" in fmt_action:
+                # We iterate and set bad values to NaN
+                for col_msg, indices in format_errors.items():
+                    # Extract original column name from the message string "ColName (Expected: Type)"
+                    actual_col = col_msg.split(" (Expected:")[0]
+                    st.session_state.current_df.loc[indices, actual_col] = np.nan
+                st.success("Invalid values converted to NaN. You can now use the Missing Values tool to impute them.")
+                st.rerun()
+else:
+    st.success("No format inconsistencies detected.")
 
 st.markdown("---")
 
 
 # --- SECTION 4: POST-CLEANING PREVIEW ---
 st.header("4️⃣ Data Preview (Post-Cleaning)")
-st.markdown("Review your data after applying cleaning strategies to ensure accuracy.")
 st.dataframe(st.session_state.current_df.head(10))
-
 st.markdown("---")
 
 
@@ -255,16 +329,4 @@ st.header("7️⃣ Export Analysis")
 
 try:
     clean_summary = summary_df.drop(columns=['Skewness_Numeric'], errors='ignore')
-    pdf_report_generator = PDFReport(st.session_state.current_df, clean_summary)
-    pdf_output_bytes = pdf_report_generator.create_pdf()
-
-    st.download_button(
-        label="⬇️ Download Full Statistical Report (PDF)",
-        data=pdf_output_bytes,
-        file_name="Pro_Data_Analysis_Report.pdf",
-        mime="application/pdf"
-    )
-except Exception as e:
-    st.error(f"PDF Generation Error: {e}")
-
-st.info("The Pro Data Analyst Assistant is ready for deep-dive analysis.")
+    pdf_
