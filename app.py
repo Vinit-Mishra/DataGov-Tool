@@ -53,10 +53,20 @@ summary_df = profiler.run_full_scan()
 # --- SECTION 1: DATA OVERVIEW ---
 st.header("1️⃣ Data Overview & Error Identification")
 
-# Show rows and columns
-col_rows, col_cols = st.columns(2)
-col_rows.metric("Total Rows (Observations)", st.session_state.current_df.shape[0])
-col_cols.metric("Total Columns (Features)", st.session_state.current_df.shape[1])
+# Calculate Duplicates
+duplicates_count = st.session_state.current_df.duplicated().sum()
+
+# Show rows, columns, and duplicates
+col_rows, col_cols, col_dupes = st.columns(3)
+col_rows.metric("Total Rows", st.session_state.current_df.shape[0])
+col_cols.metric("Total Columns", st.session_state.current_df.shape[1])
+col_dupes.metric("Duplicate Rows", duplicates_count)
+
+# Show actual duplicate rows if they exist
+if duplicates_count > 0:
+    st.warning(f"⚠️ Found {duplicates_count} duplicate rows.")
+    with st.expander("👀 View Duplicate Rows", expanded=False):
+        st.dataframe(st.session_state.current_df[st.session_state.current_df.duplicated()])
 
 st.markdown("---")
 
@@ -74,6 +84,8 @@ skewed_cols = summary_df[
 
 st.subheader("🚨 Detected Data Quality Issues")
 
+if duplicates_count > 0:
+    st.error(f"**Duplicates:** Found **{duplicates_count}** duplicate rows.")
 if not missing_data_rows.empty:
     st.error(f"**Missing Values:** Found in **{len(missing_data_rows)}** columns.")
 if not outlier_cols.empty:
@@ -81,7 +93,7 @@ if not outlier_cols.empty:
 if not skewed_cols.empty:
     st.warning(f"**High Skewness:** Found in **{len(skewed_cols)}** numeric columns.")
 
-if missing_data_rows.empty and outlier_cols.empty and skewed_cols.empty:
+if missing_data_rows.empty and outlier_cols.empty and skewed_cols.empty and duplicates_count == 0:
      st.success("✅ Initial Data Scan: Data is clean and ready for analysis!")
     
 st.markdown("---")
@@ -101,46 +113,54 @@ st.markdown("---")
 
 # --- SECTION 3: ERROR RESOLUTION ---
 st.header("3️⃣ Advanced Error Resolution (Cleaning & Preprocessing)")
-col_nan, col_outlier = st.columns(2)
+col_nan, col_outlier, col_clean_dupe = st.columns(3)
 
 with col_nan:
-    st.subheader("Missing Value Handling")
+    st.subheader("Missing Values")
     nan_option = st.selectbox(
-        "Select Missing Value Strategy:",
-        ["Do Nothing", "Drop Rows (Simple Clean)", "Impute Mean/Mode", "Impute Median/Mode"]
+        "Strategy:",
+        ["Do Nothing", "Drop Rows", "Impute Mean", "Impute Median"]
     )
-    if st.button("Apply NAN Strategy"):
-        if nan_option == "Drop Rows (Simple Clean)":
-            initial_rows = st.session_state.current_df.shape[0]
+    if st.button("Apply Missing Strategy"):
+        if nan_option == "Drop Rows":
             st.session_state.current_df.dropna(inplace=True)
-            rows_dropped = initial_rows - st.session_state.current_df.shape[0]
-            st.success(f"🧹 Dropped **{rows_dropped}** rows with missing values.")
-        elif nan_option in ["Impute Mean/Mode", "Impute Median/Mode"]:
+            st.success("Dropped rows with missing values.")
+        elif "Impute" in nan_option:
             strategy = 'mean' if 'Mean' in nan_option else 'median'
-            # Assuming profiler.impute_data returns the cleaned dataframe
             st.session_state.current_df = profiler.impute_data(imputation_strategy=strategy) 
-            st.success(f"🧹 Imputed missing values using **{strategy.capitalize()}**.")
-        
-        st.rerun() # Forces the app to reload
+            st.success(f"Imputed using {strategy}.")
+        st.rerun()
 
 with col_outlier:
-    st.subheader("Outlier Handling")
+    st.subheader("Outliers")
     outlier_action = st.selectbox(
-        "Select Outlier Strategy:",
-        ["Do Nothing", "Cap Outliers (Winsorize)"]
+        "Strategy:",
+        ["Do Nothing", "Cap (Winsorize)"]
     )
     if st.button("Apply Outlier Strategy"):
-        if outlier_action == "Cap Outliers (Winsorize)":
-            # Assuming profiler.cap_outliers returns the cleaned dataframe
+        if outlier_action == "Cap (Winsorize)":
             st.session_state.current_df = profiler.cap_outliers() 
-            st.success("📐 Capped outliers using the IQR method.")
-        
-        st.rerun() # Forces the app to reload
+            st.success("Capped outliers.")
+        st.rerun()
+
+with col_clean_dupe:
+    st.subheader("Duplicates")
+    dupe_action = st.selectbox(
+        "Strategy:",
+        ["Do Nothing", "Remove Duplicates"]
+    )
+    if st.button("Apply Duplicate Strategy"):
+        if dupe_action == "Remove Duplicates":
+            initial_rows = st.session_state.current_df.shape[0]
+            st.session_state.current_df.drop_duplicates(inplace=True)
+            rows_removed = initial_rows - st.session_state.current_df.shape[0]
+            st.success(f"Removed {rows_removed} duplicate rows.")
+        st.rerun()
 
 st.markdown("---")
 
 
-# --- NEW SECTION 4: POST-CLEANING PREVIEW ---
+# --- SECTION 4: POST-CLEANING PREVIEW ---
 st.header("4️⃣ Data Preview (Post-Cleaning)")
 st.markdown("Review your data after applying cleaning strategies to ensure accuracy.")
 st.dataframe(st.session_state.current_df.head(10))
