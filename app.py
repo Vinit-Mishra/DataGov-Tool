@@ -87,7 +87,7 @@ if missing_data_rows.empty and outlier_cols.empty and skewed_cols.empty:
 st.markdown("---")
 
 
-# --- SECTION 2: STATISTICAL PROFILE (Moved Up) ---
+# --- SECTION 2: STATISTICAL PROFILE ---
 st.header("2️⃣ Full Statistical Profile")
 
 with st.expander("📊 Detailed Statistical Summary (Click to expand)", expanded=True):
@@ -99,7 +99,7 @@ with st.expander("📊 Detailed Statistical Summary (Click to expand)", expanded
 st.markdown("---")
 
 
-# --- SECTION 3: ERROR RESOLUTION (Moved Down) ---
+# --- SECTION 3: ERROR RESOLUTION ---
 st.header("3️⃣ Advanced Error Resolution (Cleaning & Preprocessing)")
 col_nan, col_outlier = st.columns(2)
 
@@ -121,7 +121,7 @@ with col_nan:
             st.session_state.current_df = profiler.impute_data(imputation_strategy=strategy) 
             st.success(f"🧹 Imputed missing values using **{strategy.capitalize()}**.")
         
-        st.rerun() # Forces the app to reload and update the Profile in Section 2
+        st.rerun() # Forces the app to reload
 
 with col_outlier:
     st.subheader("Outlier Handling")
@@ -135,13 +135,21 @@ with col_outlier:
             st.session_state.current_df = profiler.cap_outliers() 
             st.success("📐 Capped outliers using the IQR method.")
         
-        st.rerun() # Forces the app to reload and update the Profile in Section 2
+        st.rerun() # Forces the app to reload
 
 st.markdown("---")
 
 
-# --- SECTION 4: VISUALIZATION ---
-st.header("4️⃣ Interactive Visualization")
+# --- NEW SECTION 4: POST-CLEANING PREVIEW ---
+st.header("4️⃣ Data Preview (Post-Cleaning)")
+st.markdown("Review your data after applying cleaning strategies to ensure accuracy.")
+st.dataframe(st.session_state.current_df.head(10))
+
+st.markdown("---")
+
+
+# --- SECTION 5: VISUALIZATION ---
+st.header("5️⃣ Interactive Visualization")
 data_plotter = DataPlotter(st.session_state.current_df)
 
 tab_dist, tab_corr, tab_bivariate, tab_raw = st.tabs(["📊 Distributions", "🔥 Correlation Heatmap", "🔗 Relationship Analysis", "📝 Raw Data"])
@@ -168,3 +176,75 @@ with tab_corr:
 with tab_bivariate:
     st.subheader("Compare Two Variables")
     cols = st.session_state.current_df.columns.tolist()
+    col_x = st.selectbox("Select X-axis Column:", cols, key="x_col")
+    col_y = st.selectbox("Select Y-axis Column:", cols, key="y_col")
+
+    if col_x and col_y:
+        try:
+            plot_data = st.session_state.current_df.dropna(subset=[col_x, col_y])
+            if pd.api.types.is_numeric_dtype(plot_data[col_x]) and pd.api.types.is_numeric_dtype(plot_data[col_y]):
+                fig = px.scatter(plot_data, x=col_x, y=col_y, trendline="ols", title=f"Scatter Plot: {col_x} vs {col_y}")
+            else:
+                fig = px.box(plot_data, x=col_x, y=col_y, title=f"Relationship: {col_y} by {col_x}")
+            st.plotly_chart(fig, use_container_width=True)
+        except Exception as e:
+            st.error(f"Plotting Error: {e}")
+
+with tab_raw:
+    st.subheader("Current Working Dataset")
+    st.dataframe(st.session_state.current_df)
+
+
+# --- SECTION 6: MODELING ---
+st.header("6️⃣ Simple Predictive Modeling (Binary Classification)")
+
+target_col = st.selectbox("Select Target Column:", st.session_state.current_df.columns)
+
+if st.button("Run Logistic Regression"):
+    try:
+        data = st.session_state.current_df.copy()
+        if data[target_col].nunique() != 2:
+            st.error("Model requires a **binary** target column.")
+        else:
+            with st.spinner("Training Model..."):
+                data.dropna(inplace=True)
+                le = LabelEncoder()
+                data[target_col] = le.fit_transform(data[target_col])
+                
+                categorical_cols = data.select_dtypes(include=['object', 'category']).columns.tolist()
+                data = pd.get_dummies(data, columns=categorical_cols, drop_first=True)
+                
+                X = data.drop(columns=[target_col])
+                y = data[target_col]
+
+                X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
+                model = LogisticRegression(max_iter=1000)
+                model.fit(X_train, y_train)
+                y_pred = model.predict(X_test)
+                
+                st.metric("Model Accuracy", f"{accuracy_score(y_test, y_pred):.2f}")
+                st.text("Classification Report:")
+                st.code(classification_report(y_test, y_pred, target_names=[str(c) for c in le.classes_]))
+    except Exception as e:
+        st.error(f"Modeling Error: {e}")
+
+
+# --- SECTION 7: REPORT ---
+st.markdown("---")
+st.header("7️⃣ Export Analysis")
+
+try:
+    clean_summary = summary_df.drop(columns=['Skewness_Numeric'], errors='ignore')
+    pdf_report_generator = PDFReport(st.session_state.current_df, clean_summary)
+    pdf_output_bytes = pdf_report_generator.create_pdf()
+
+    st.download_button(
+        label="⬇️ Download Full Statistical Report (PDF)",
+        data=pdf_output_bytes,
+        file_name="Pro_Data_Analysis_Report.pdf",
+        mime="application/pdf"
+    )
+except Exception as e:
+    st.error(f"PDF Generation Error: {e}")
+
+st.info("The Pro Data Analyst Assistant is ready for deep-dive analysis.")
