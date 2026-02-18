@@ -1,10 +1,9 @@
+streamlit
 pandas
 numpy
-scipy
-statsmodels
-plotly
-seaborn
-streamlit
-fpdf2
-matplotlib
 scikit-learn
+plotly
+fpdf
+seaborn
+matplotlib
+altair<5
