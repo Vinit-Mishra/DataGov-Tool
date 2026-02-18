@@ -21,11 +21,6 @@ def validate_email(text):
     pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
     return bool(re.match(pattern, text))
 
-def validate_url(text):
-    if not isinstance(text, str): return False
-    pattern = r'https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+'
-    return bool(re.match(pattern, text))
-
 def is_numeric_string(text):
     if isinstance(text, (int, float)): return True
     if not isinstance(text, str): return False
@@ -64,16 +59,6 @@ def detect_format_inconsistencies(df):
              if match_ratio < 1.0: # If not perfect, flag the rest
                  inconsistent_indices[f"{col} (Expected: Email)"] = df[~df[col].apply(validate_email) & df[col].notna()].index.tolist()
                  continue
-
-        # 3. Check for Dates (heuristically via pd.to_datetime)
-        # We try converting. If mostly success, flag failures.
-        try:
-            dates = pd.to_datetime(valid_series, errors='coerce')
-            date_ratio = dates.notna().sum() / total
-            if 0.9 < date_ratio < 1.0:
-                 inconsistent_indices[f"{col} (Expected: Date)"] = df[dates.isna() & df[col].notna()].index.tolist()
-        except:
-            pass
 
     return inconsistent_indices
 
@@ -118,8 +103,6 @@ summary_df = profiler.run_full_scan()
 st.header("1️⃣ Data Overview & Error Identification")
 
 duplicates_count = st.session_state.current_df.duplicated().sum()
-
-# Run the New Format Checker
 format_errors = detect_format_inconsistencies(st.session_state.current_df)
 total_format_errors = sum([len(v) for v in format_errors.values()])
 
@@ -129,15 +112,13 @@ col_cols.metric("Total Columns", st.session_state.current_df.shape[1])
 col_dupes.metric("Duplicate Rows", duplicates_count)
 col_fmt.metric("Format/Pattern Errors", total_format_errors)
 
-# Show Duplicates
 if duplicates_count > 0:
     st.warning(f"⚠️ Found {duplicates_count} duplicate rows.")
     with st.expander("👀 View Duplicate Rows", expanded=False):
         st.dataframe(st.session_state.current_df[st.session_state.current_df.duplicated()])
 
-# Show Format Errors
 if total_format_errors > 0:
-    st.error(f"🚨 Found {total_format_errors} values that don't match the column format (e.g., Invalid Emails, Text in Number columns).")
+    st.error(f"🚨 Found {total_format_errors} values that don't match the column format.")
     with st.expander("👀 View Pattern Mismatches (Format Outliers)", expanded=True):
         for col_msg, indices in format_errors.items():
             st.write(f"**Column: {col_msg}** - {len(indices)} issues found.")
@@ -145,7 +126,6 @@ if total_format_errors > 0:
 
 st.markdown("---")
 
-# Existing Statistical Checks
 summary_df['Skewness_Numeric'] = pd.to_numeric(summary_df['Skewness'], errors='coerce') 
 missing_data_rows = summary_df[summary_df['Missing (%)'] > 0]
 outlier_cols = summary_df[summary_df['Outliers (IQR)'] > 0]
@@ -159,9 +139,7 @@ st.markdown("---")
 # --- SECTION 2: STATISTICAL PROFILE ---
 st.header("2️⃣ Full Statistical Profile")
 with st.expander("📊 Detailed Statistical Summary (Click to expand)", expanded=False):
-    st.subheader("Statistical Properties of All Columns")
-    display_df = summary_df.drop(columns=['Skewness_Numeric'], errors='ignore')
-    st.dataframe(display_df)
+    st.dataframe(summary_df.drop(columns=['Skewness_Numeric'], errors='ignore'))
 st.markdown("---")
 
 
@@ -172,46 +150,74 @@ col_nan, col_outlier, col_clean_dupe = st.columns(3)
 # 1. Missing Values
 with col_nan:
     st.subheader("Missing Values")
-    nan_option = st.selectbox("Strategy:", ["Do Nothing", "Drop Rows", "Impute Mean", "Impute Median"])
-    if st.button("Apply Missing Strategy"):
-        if nan_option == "Drop Rows":
-            st.session_state.current_df.dropna(inplace=True)
-            st.success("Dropped rows with missing values.")
-        elif "Impute" in nan_option:
-            strategy = 'mean' if 'Mean' in nan_option else 'median'
-            st.session_state.current_df = profiler.impute_data(imputation_strategy=strategy) 
-            st.success(f"Imputed using {strategy}.")
-        st.rerun()
+    # Identify specific columns with missing data
+    cols_with_nan = summary_df[summary_df['Missing (%)'] > 0].index.tolist()
+    
+    if cols_with_nan:
+        st.error(f"**Affected Columns:** {', '.join(cols_with_nan)}")
+        st.caption("These columns will be transformed.")
+        
+        nan_option = st.selectbox("Strategy:", ["Do Nothing", "Drop Rows", "Impute Mean", "Impute Median"])
+        
+        if st.button("Apply Missing Strategy"):
+            if nan_option == "Drop Rows":
+                st.session_state.current_df.dropna(inplace=True)
+                st.success("Dropped rows with missing values.")
+            elif "Impute" in nan_option:
+                strategy = 'mean' if 'Mean' in nan_option else 'median'
+                st.session_state.current_df = profiler.impute_data(imputation_strategy=strategy) 
+                st.success(f"Imputed using {strategy}.")
+            st.rerun()
+    else:
+        st.success("No missing values found.")
 
 # 2. Outliers (Statistical)
 with col_outlier:
     st.subheader("Statistical Outliers")
-    outlier_action = st.selectbox("Strategy:", ["Do Nothing", "Cap (Winsorize)"])
-    if st.button("Apply Outlier Strategy"):
-        if outlier_action == "Cap (Winsorize)":
-            st.session_state.current_df = profiler.cap_outliers() 
-            st.success("Capped outliers.")
-        st.rerun()
+    # Identify specific columns with outliers
+    cols_with_outliers = summary_df[summary_df['Outliers (IQR)'] > 0].index.tolist()
+    
+    if cols_with_outliers:
+        st.error(f"**Affected Columns:** {', '.join(cols_with_outliers)}")
+        st.caption("These numeric columns contain outliers.")
+        
+        outlier_action = st.selectbox("Strategy:", ["Do Nothing", "Cap (Winsorize)"])
+        
+        if st.button("Apply Outlier Strategy"):
+            if outlier_action == "Cap (Winsorize)":
+                st.session_state.current_df = profiler.cap_outliers() 
+                st.success("Capped outliers.")
+            st.rerun()
+    else:
+        st.success("No statistical outliers found.")
 
 # 3. Duplicates
 with col_clean_dupe:
     st.subheader("Duplicates")
-    dupe_action = st.selectbox("Strategy:", ["Do Nothing", "Remove Duplicates"])
-    if st.button("Apply Duplicate Strategy"):
-        if dupe_action == "Remove Duplicates":
-            st.session_state.current_df.drop_duplicates(inplace=True)
-            st.success("Removed duplicate rows.")
-        st.rerun()
+    if duplicates_count > 0:
+        st.error(f"**Count:** {duplicates_count} duplicate rows.")
+        dupe_action = st.selectbox("Strategy:", ["Do Nothing", "Remove Duplicates"])
+        if st.button("Apply Duplicate Strategy"):
+            if dupe_action == "Remove Duplicates":
+                st.session_state.current_df.drop_duplicates(inplace=True)
+                st.success("Removed duplicate rows.")
+            st.rerun()
+    else:
+        st.success("No duplicates found.")
 
-# 4. NEW: Format/Pattern Cleaning
+# 4. Format Inconsistency Cleaning
 st.subheader("🔧 Format Inconsistency Cleaning")
 if total_format_errors > 0:
-    st.warning("Detected pattern mismatches (e.g., 'abc' in a numeric column, or invalid emails).")
+    # Get just the column names for display
+    bad_fmt_cols = [c.split(" (Expected:")[0] for c in format_errors.keys()]
+    st.error(f"**Affected Columns:** {', '.join(bad_fmt_cols)}")
+    st.caption("These columns contain values that do not match the expected format (e.g. text in a number column).")
+    
     col_fmt_act, col_fmt_btn = st.columns([3, 1])
     with col_fmt_act:
         fmt_action = st.selectbox("Choose Action for Invalid Formats:", ["Do Nothing", "Convert Invalid to NaN (Then Impute)", "Drop Rows with Invalid Formats"])
     with col_fmt_btn:
-        st.write("") # Spacer
+        st.write("") 
         st.write("") 
         if st.button("Fix Formats"):
             if fmt_action == "Drop Rows with Invalid Formats":
@@ -220,15 +226,13 @@ if total_format_errors > 0:
                     all_invalid_indices.extend(idx_list)
                 initial_count = st.session_state.current_df.shape[0]
                 st.session_state.current_df.drop(index=list(set(all_invalid_indices)), inplace=True)
-                st.success(f"Dropped {initial_count - st.session_state.current_df.shape[0]} rows with invalid formats.")
+                st.success(f"Dropped {initial_count - st.session_state.current_df.shape[0]} rows.")
                 st.rerun()
             elif "Convert" in fmt_action:
-                # We iterate and set bad values to NaN
                 for col_msg, indices in format_errors.items():
-                    # Extract original column name from the message string "ColName (Expected: Type)"
                     actual_col = col_msg.split(" (Expected:")[0]
                     st.session_state.current_df.loc[indices, actual_col] = np.nan
-                st.success("Invalid values converted to NaN. You can now use the Missing Values tool to impute them.")
+                st.success("Invalid values converted to NaN.")
                 st.rerun()
 else:
     st.success("No format inconsistencies detected.")
