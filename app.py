@@ -55,7 +55,7 @@ def detect_format_inconsistencies(df):
         email_matches = valid_series.apply(validate_email)
         match_ratio = email_matches.sum() / total
         # Heuristic: If col name has 'email' or >50% content is email
-        if 'email' in col.lower() or match_ratio > 0.5:
+        if 'email' in str(col).lower() or match_ratio > 0.5:
              if match_ratio < 1.0: # If not perfect, flag the rest
                  inconsistent_indices[f"{col} (Expected: Email)"] = df[~df[col].apply(validate_email) & df[col].notna()].index.tolist()
                  continue
@@ -154,7 +154,9 @@ with col_nan:
     cols_with_nan = summary_df[summary_df['Missing (%)'] > 0].index.tolist()
     
     if cols_with_nan:
-        st.error(f"**Affected Columns:** {', '.join(cols_with_nan)}")
+        # FIX: Convert columns to string to avoid TypeError if column names are integers
+        col_names_str = [str(c) for c in cols_with_nan]
+        st.error(f"**Affected Columns:** {', '.join(col_names_str)}")
         st.caption("These columns will be transformed.")
         
         nan_option = st.selectbox("Strategy:", ["Do Nothing", "Drop Rows", "Impute Mean", "Impute Median"])
@@ -178,7 +180,9 @@ with col_outlier:
     cols_with_outliers = summary_df[summary_df['Outliers (IQR)'] > 0].index.tolist()
     
     if cols_with_outliers:
-        st.error(f"**Affected Columns:** {', '.join(cols_with_outliers)}")
+        # FIX: Convert columns to string
+        col_names_str = [str(c) for c in cols_with_outliers]
+        st.error(f"**Affected Columns:** {', '.join(col_names_str)}")
         st.caption("These numeric columns contain outliers.")
         
         outlier_action = st.selectbox("Strategy:", ["Do Nothing", "Cap (Winsorize)"])
@@ -209,7 +213,7 @@ with col_clean_dupe:
 st.subheader("🔧 Format Inconsistency Cleaning")
 if total_format_errors > 0:
     # Get just the column names for display
-    bad_fmt_cols = [c.split(" (Expected:")[0] for c in format_errors.keys()]
+    bad_fmt_cols = [str(c).split(" (Expected:")[0] for c in format_errors.keys()]
     st.error(f"**Affected Columns:** {', '.join(bad_fmt_cols)}")
     st.caption("These columns contain values that do not match the expected format (e.g. text in a number column).")
     
@@ -322,6 +326,7 @@ if st.button("Run Logistic Regression"):
                 
                 st.metric("Model Accuracy", f"{accuracy_score(y_test, y_pred):.2f}")
                 st.text("Classification Report:")
+                # FIX: Ensure target names are strings
                 st.code(classification_report(y_test, y_pred, target_names=[str(c) for c in le.classes_]))
     except Exception as e:
         st.error(f"Modeling Error: {e}")
